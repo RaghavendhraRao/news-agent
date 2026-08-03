@@ -18,7 +18,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import requests
+from dotenv import load_dotenv
 
+import gdelt_files
+
+load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("agent")
 
@@ -46,24 +50,24 @@ GDELT_SLEEP = 6                           # GDELT allows ~1 req / 5s per IP. Do 
 #           message_thread_id from https://api.telegram.org/bot<TOKEN>/getUpdates
 CATEGORIES = {
     "Gold & Metals": {
-        "topic_id": 3,
+        "topic_id": None,
         "gdelt": '(gold OR bullion OR "gold price" OR "precious metals") '
                  '(rally OR crash OR record OR reserve OR import OR duty OR smuggl)',
         "must_match": ["gold", "bullion", "silver", "metal", "sona"],
     },
     "Fuel & Energy": {
-        "topic_id": 4,
+        "topic_id": None,
         "gdelt": '("crude oil" OR petrol OR diesel OR "fuel price" OR OPEC OR "natural gas") '
                  '(price OR hike OR cut OR shortage OR pipeline OR refinery)',
         "must_match": ["oil", "petrol", "diesel", "fuel", "opec", "gas", "crude"],
     },
     "Wars & Conflict": {
-        "topic_id": 5,
+        "topic_id": None,
         "gdelt": '(airstrike OR ceasefire OR offensive OR "border clash" OR insurgency OR shelling)',
         "must_match": ["strike", "war", "clash", "ceasefire", "troops", "attack", "militar"],
     },
     "AI & Tech": {
-        "topic_id": 6,
+        "topic_id": None,
         "gdelt": '("artificial intelligence" OR "language model" OR "AI chip" OR "AI regulation") '
                  '(launch OR ban OR funding OR breakthrough OR lawsuit)',
         "must_match": ["ai ", "artificial intelligence", "model", "chip", "openai", "gemini"],
@@ -74,11 +78,13 @@ CATEGORIES = {
 # GDELT DOC search is ENGLISH-ONLY (native-language search was phased out),
 # so list English spellings + common transliterations. Gemini translates the OUTPUT.
 LOCALITY = {
-    "enabled": True,
-    "sourcecountry": "IN",          # FIPS code, e.g. IN, US, UK. None = whole world.
+    "enabled": False,               # True = restrict to the places below
+    "country_code": "IN",           # GDELT country code: IN, US, UK. None = worldwide.
     "state": "Kerala",
     "districts": ["Thrissur", "Palakkad", "Chalakudy"],
 }
+
+SCAN_TOP = 200      # how many of the most-mentioned URLs to resolve titles for
 
 # Fast wire feeds — these beat GDELT's 15-min cycle for breaking news.
 RSS_FEEDS = [
@@ -193,15 +199,13 @@ def collect(con) -> dict:
     """Returns {category: [article, ...]} of unseen, prefiltered candidates."""
     buckets = {c: [] for c in CATEGORIES}
 
-    for name, cfg in CATEGORIES.items():
-        try:
-            arts = gdelt_query(build_query(cfg["gdelt"]))
-        except RateLimited:
-            log.error("GDELT rate-limited this IP. Aborting ingest; retry in ~20 min.")
-            break
-        log.info("GDELT %-16s -> %d raw", name, len(arts))
+    # GDELT via static data files -- one download serves all categories,
+    # no per-query requests, no throttling.
+    gd = gdelt_files.collect_by_title(CATEGORIES, LOCALITY,
+                                      scan_top=SCAN_TOP,
+                                      max_per_cat=MAX_PER_CATEGORY)
+    for name, arts in gd.items():
         buckets[name].extend(arts)
-        time.sleep(GDELT_SLEEP)
 
     for name, url in RSS_FEEDS:
         if name in buckets:
@@ -216,8 +220,8 @@ def collect(con) -> dict:
             title, url = a.get("title", "").strip(), a.get("url", "").strip()
             if not title or not url:
                 continue
-            blob = title.lower()
-            if must and not any(k in blob for k in must):
+            # GDELT rows were already keyword-matched on the resolved title
+            if "place" not in a and must and not gdelt_files.kw_hit(title, must):
                 continue
             if not is_new(con, url, title):
                 continue
