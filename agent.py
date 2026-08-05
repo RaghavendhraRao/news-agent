@@ -21,6 +21,7 @@ import requests
 from dotenv import load_dotenv
 
 import gdelt_files
+import store
 
 load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
@@ -34,11 +35,13 @@ class RateLimited(Exception):
 # CONFIG
 # --------------------------------------------------------------------------
 
-BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
-GEMINI_KEY = os.environ["GEMINI_API_KEY"]
+# Read lazily: publish.py imports this module purely for constants and must
+# not require Telegram credentials to render a static file.
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-GEMINI_MODEL = "gemini-flash-lite-latest"  # alias: always current Flash-Lite. "gemini-flash-latest" = better quality, lower quota
+GEMINI_MODEL = store.GEMINI_MODEL   # single source of truth
 DB_PATH = "seen.db"
 LOOKBACK_MINUTES = 1440                   # FIRST RUN ONLY. Set back to 45 once it works.
 MAX_PER_CATEGORY = 20                     # GDELT records per category. Raise to 60 once stable.

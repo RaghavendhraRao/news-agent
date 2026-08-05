@@ -19,7 +19,6 @@ import logging
 import requests
 
 import store
-import agent
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)s | %(message)s")
@@ -53,14 +52,13 @@ def translate_batch(batch: list, lang_code: str, lang_name: str) -> dict:
         for i, a in enumerate(batch))
     prompt = PROMPT.format(n=len(batch), language=lang_name, items=listing)
 
-    url = ("https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{agent.GEMINI_MODEL}:generateContent")
+    url = store.GEMINI_URL
     body = {"contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.2,
                                  "responseMimeType": "application/json"}}
     for attempt in range(3):
         try:
-            r = requests.post(url, headers={"x-goog-api-key": agent.GEMINI_KEY},
+            r = requests.post(url, headers={"x-goog-api-key": store.gemini_key()},
                               json=body, timeout=120)
             if r.status_code == 429:
                 wait = 40 * (attempt + 1)

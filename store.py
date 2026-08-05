@@ -44,6 +44,21 @@ LANGUAGE_NAMES = {"en": "English", **EXTRA_LANGUAGES}
 # the quota failure is invisible: runs still "succeed", they just stop
 # producing summaries, and nothing in the logs says why.
 DAILY_CALL_BUDGET = 900
+
+# Model + endpoint live here so the LLM steps never have to import agent.py,
+# which needs Telegram credentials just to be imported. A summarising job
+# should not fail because a chat token is absent.
+GEMINI_MODEL = "gemini-flash-lite-latest"
+GEMINI_URL = ("https://generativelanguage.googleapis.com/v1beta/models/"
+              f"{GEMINI_MODEL}:generateContent")
+
+
+def gemini_key() -> str:
+    import os
+    k = os.environ.get("GEMINI_API_KEY", "")
+    if not k:
+        raise SystemExit("GEMINI_API_KEY is not set")
+    return k
 RETENTION_HOURS = 72
 
 # GKG 2.1 column positions
