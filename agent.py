@@ -249,8 +249,9 @@ horoscopes, sponsored content, and stale rehashes.
 For every article you KEEP, return:
   "i"       : the article's index number
   "title_en": the headline in clear English (translate if needed)
-  "summary" : ONE sentence, max 25 words, stating the concrete fact — a number,
-              a name, a place, or a decision. Never "discusses" or "highlights".
+  "summary" : ONE sentence, MAX 18 WORDS, stating the concrete fact — a number,
+              a name, a place, or a decision. Front-load the fact. No preamble,
+              no "the article reports", no "discusses" or "highlights".
   "impact"  : one of "high", "medium", "low"
 
 Return ONLY a JSON array. No markdown, no prose, no code fences.

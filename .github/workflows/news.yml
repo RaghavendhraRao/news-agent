@@ -1,9 +1,12 @@
-﻿name: news-collector
+name: news-collector
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '5 * * * *'     # hourly: ingest, enrich, translate, publish
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 concurrency:
   group: news-collector
@@ -12,15 +15,13 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
-
       - run: pip install -r requirements.txt
 
       - name: Restore index
@@ -39,12 +40,39 @@ jobs:
             python backfill.py 6
           fi
 
-      - name: Run
+      # Ingest catches up on every slice published since the last run,
+      # so an hourly schedule still sees all four 15-minute slices.
+      - name: Ingest, categorise, publish headlines
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python run.py
+
+      - name: Write long summaries
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python enrich.py
+
+      - name: Translate
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python translate.py
+
+      - name: Publish web feed
+        run: python publish.py
+
+      - name: Quota report
+        run: python -c "import store;c=store.connect();print('Gemini calls today:',store.calls_today(c),'/',store.DAILY_CALL_BUDGET);print(store.call_breakdown(c))"
+
+      - name: Commit feed
+        run: |
+          git config user.name news-bot
+          git config user.email news-bot@users.noreply.github.com
+          git add docs/feed.json
+          git diff --staged --quiet || git commit -m "feed $(date -u +%FT%TZ)"
+          git pull --rebase --autostash origin main || true
+          git push origin HEAD:main
 
       - name: Save index
         if: always()

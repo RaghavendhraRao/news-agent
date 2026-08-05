@@ -1,0 +1,12 @@
+﻿{
+  "name": "Wire — world news",
+  "short_name": "Wire",
+  "description": "Global news by topic and place, with unusual-coverage detection.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F2F3EE",
+  "theme_color": "#14181C",
+  "icons": [
+    {"src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+  ]
+}

@@ -13,6 +13,7 @@ resolved lazily only for records that actually get surfaced.
 
 import io
 import re
+import sys
 import csv
 import zipfile
 import sqlite3
@@ -23,15 +24,32 @@ import requests
 
 log = logging.getLogger("agent.store")
 
+# GDELT theme and location fields regularly exceed Python's default 128KB
+# CSV field cap. Without this, whole slices fail to parse and are lost
+# silently -- the run reports success having ingested nothing.
+csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
+
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
 DB_PATH = "news.db"
+
+# Languages the feed is published in. Adding one costs a translation pass for
+# new articles only (~40/hour), not for the whole feed every rebuild.
+EXTRA_LANGUAGES = {"hi": "Hindi", "ml": "Malayalam"}
+LANGUAGE_NAMES = {"en": "English", **EXTRA_LANGUAGES}
+
+# Hard ceiling on Gemini calls per UTC day, kept under the free tier with
+# room for retries. Every LLM caller checks this before firing. Without it
+# the quota failure is invisible: runs still "succeed", they just stop
+# producing summaries, and nothing in the logs says why.
+DAILY_CALL_BUDGET = 900
 RETENTION_HOURS = 72
 
 # GKG 2.1 column positions
 G_DATE, G_SOURCE, G_URL = 1, 3, 4
 G_THEMES, G_LOCATIONS, G_PERSONS, G_ORGS, G_TONE = 7, 9, 11, 13, 15
+G_IMAGE = 18          # V2.1SHARINGIMAGE -- og:image, ~88% populated
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS articles (
@@ -47,6 +65,7 @@ CREATE TABLE IF NOT EXISTS articles (
     lat        REAL,
     lon        REAL,
     tone       REAL,
+    image      TEXT,
     seen_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_seen    ON articles(seen_at);
@@ -55,6 +74,13 @@ CREATE INDEX IF NOT EXISTS ix_adm1    ON articles(country, adm1, seen_at);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS search_idx
     USING fts5(url UNINDEXED, blob, tokenize='porter');
+
+CREATE TABLE IF NOT EXISTS api_calls (
+    day  TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    n    INTEGER NOT NULL,
+    PRIMARY KEY (day, kind)
+);
 
 CREATE TABLE IF NOT EXISTS slices (
     slice_id TEXT PRIMARY KEY,
@@ -71,12 +97,67 @@ CREATE TABLE IF NOT EXISTS agg (
     PRIMARY KEY (hour, kind, key)
 );
 CREATE INDEX IF NOT EXISTS ix_agg ON agg(kind, hour);
+
+-- LLM output. Summaries cost quota to produce, so they are kept rather than
+-- discarded after delivery: the web feed republishes them for free.
+CREATE TABLE IF NOT EXISTS published (
+    url      TEXT PRIMARY KEY,
+    category TEXT NOT NULL,
+    title    TEXT NOT NULL,
+    summary  TEXT,
+    impact   TEXT,
+    image    TEXT,
+    lead     TEXT,          -- 120-150 word summary, written from article text
+    source   TEXT,
+    country  TEXT,
+    place    TEXT,
+    ts       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_pub ON published(ts);
+
+-- Translations are permanent: an article is translated once, ever. That is
+-- what makes multi-language affordable -- cost scales with new articles,
+-- not with how often the site rebuilds.
+CREATE TABLE IF NOT EXISTS translations (
+    url   TEXT NOT NULL,
+    lang  TEXT NOT NULL,
+    title TEXT,
+    lead  TEXT,
+    ts    TEXT NOT NULL,
+    PRIMARY KEY (url, lang)
+);
 """
+
+
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS leaves an
+# existing table untouched, so a database made by an older version keeps the
+# old shape and inserts fail on column count. Adding them explicitly means
+# upgrading never requires deleting the index and re-backfilling.
+MIGRATIONS = {
+    "articles":  [("image", "TEXT")],
+    "published": [("image", "TEXT"), ("lead", "TEXT")],
+}
+
+
+def _migrate(con):
+    for table, cols in MIGRATIONS.items():
+        try:
+            have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        except sqlite3.OperationalError:
+            continue
+        if not have:
+            continue
+        for name, decl in cols:
+            if name not in have:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                log.info("migrated: %s.%s added", table, name)
+    con.commit()
 
 
 def connect(path: str = DB_PATH) -> sqlite3.Connection:
     con = sqlite3.connect(path)
     con.executescript(SCHEMA)
+    _migrate(con)
     con.commit()
     return con
 
@@ -169,16 +250,17 @@ def ingest_slice(con, url: str) -> int:
         orgs = x[G_ORGS][:120]
         tone = _to_float((x[G_TONE].split(",") or [None])[0])
 
+        img = x[G_IMAGE].strip() if len(x) > G_IMAGE else ""
         recs.append((u, x[G_SOURCE], None, themes, persons, orgs,
                      loc.get("country"), loc.get("adm1"), loc.get("place"),
                      _to_float(loc.get("lat")), _to_float(loc.get("lon")),
-                     tone, now))
+                     tone, img or None, now))
         # searchable text: url slug + place + people + orgs + themes
         slug = re.sub(r"[-_/]+", " ", re.sub(r"^https?://", "", u))
         blobs.append((u, " ".join([slug, loc.get("place", "") or ""])))
 
     cur = con.executemany(
-        "INSERT OR IGNORE INTO articles VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", recs)
+        "INSERT OR IGNORE INTO articles VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", recs)
     con.executemany("INSERT INTO search_idx (url, blob) VALUES (?,?)", blobs)
     con.execute("INSERT OR REPLACE INTO slices VALUES (?,?)",
                 (slice_id, datetime.now(timezone.utc).isoformat()))
@@ -372,7 +454,8 @@ def compact(con, keep_raw_hours: int = 24, keep_agg_hours: int = 72,
     con.execute("DELETE FROM agg WHERE hour < ?", (agg_cut,))
     con.execute("DELETE FROM slices WHERE done_at < ?", (raw_cut,))
     con.commit()
-    con.execute("VACUUM")
+    if old:
+        con.execute("VACUUM")
     return {"pruned_articles": len(old),
             "agg_rows": con.execute("SELECT COUNT(*) FROM agg").fetchone()[0]}
 
@@ -407,3 +490,116 @@ def agg_trending(con, kind: str = "place", window_h: int = 3,
                     "cold_start": False})
     out.sort(key=lambda x: (-x["lift"], -x["count"]))
     return out[:limit]
+
+
+# ---------------------------------------------------------------- published
+
+def save_published(con, category: str, items: list) -> int:
+    now = datetime.now(timezone.utc).isoformat()
+    rows = [(a["url"], category, a.get("title_en") or a.get("title", ""),
+             a.get("summary", ""), a.get("impact", "low"),
+             a.get("image") or None, a.get("lead") or None,
+             a.get("domain", ""), a.get("country", ""), a.get("place", ""), now)
+            for a in items if a.get("url")]
+    con.executemany(
+        "INSERT OR REPLACE INTO published VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+    con.commit()
+    return len(rows)
+
+
+def get_published(con, hours: int = 48, limit: int = 400) -> list:
+    cols = ["url", "category", "title", "summary", "impact", "image", "lead",
+            "source", "country", "place", "ts"]
+    return [dict(zip(cols, r)) for r in con.execute(
+        f"SELECT {','.join(cols)} FROM published WHERE ts >= ? "
+        "ORDER BY ts DESC LIMIT ?", (_since(hours), limit))]
+
+
+def prune_published(con, hours: int = 72):
+    con.execute("DELETE FROM published WHERE ts < ?", (_since(hours),))
+    con.commit()
+
+
+def untranslated(con, lang: str, limit: int = 40) -> list:
+    """Enriched stories that have no translation in this language yet."""
+    return [dict(zip(["url", "title", "lead"], r)) for r in con.execute(
+        """SELECT p.url, p.title, p.lead FROM published p
+           LEFT JOIN translations t ON t.url = p.url AND t.lang = ?
+           WHERE t.url IS NULL AND p.lead IS NOT NULL
+           ORDER BY p.ts DESC LIMIT ?""", (lang, limit))]
+
+
+def save_translations(con, lang: str, rows: dict) -> int:
+    now = datetime.now(timezone.utc).isoformat()
+    con.executemany(
+        "INSERT OR REPLACE INTO translations VALUES (?,?,?,?,?)",
+        [(u, lang, v.get("title"), v.get("lead"), now) for u, v in rows.items()])
+    con.commit()
+    return len(rows)
+
+
+def translations_for(con, urls: list) -> dict:
+    if not urls:
+        return {}
+    out = {}
+    q = ",".join("?" * len(urls))
+    for u, lang, title, lead in con.execute(
+            f"SELECT url, lang, title, lead FROM translations WHERE url IN ({q})",
+            urls):
+        out.setdefault(u, {})[lang] = {"title": title, "lead": lead}
+    return out
+
+
+# ---------------------------------------------------------------- quota
+
+def _today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def record_call(con, kind: str, n: int = 1):
+    con.execute("""INSERT INTO api_calls (day, kind, n) VALUES (?,?,?)
+                   ON CONFLICT(day, kind) DO UPDATE SET n = n + ?""",
+                (_today(), kind, n, n))
+    con.commit()
+
+
+def calls_today(con) -> int:
+    r = con.execute("SELECT COALESCE(SUM(n),0) FROM api_calls WHERE day=?",
+                    (_today(),)).fetchone()
+    return r[0] if r else 0
+
+
+def budget_left(con) -> int:
+    return max(DAILY_CALL_BUDGET - calls_today(con), 0)
+
+
+def call_breakdown(con) -> dict:
+    return {k: n for k, n in con.execute(
+        "SELECT kind, n FROM api_calls WHERE day=? ORDER BY n DESC", (_today(),))}
+
+
+# ---------------------------------------------------------------- title cache
+
+def cached_titles(con, urls: list) -> dict:
+    """Titles already resolved in an earlier run. Articles live in the index
+    for 12 hours and categories overlap heavily, so without this the same
+    page is fetched again every hour for as long as it stays in the window."""
+    if not urls:
+        return {}
+    out = {}
+    CH = 500
+    for i in range(0, len(urls), CH):
+        chunk = urls[i:i + CH]
+        q = ",".join("?" * len(chunk))
+        for u, t in con.execute(
+                f"SELECT url, title FROM articles WHERE url IN ({q}) "
+                "AND title IS NOT NULL", chunk):
+            out[u] = t
+    return out
+
+
+def save_titles(con, titles: dict):
+    if titles:
+        con.executemany("UPDATE articles SET title=? WHERE url=?",
+                        [(t, u) for u, t in titles.items()])
+        con.commit()

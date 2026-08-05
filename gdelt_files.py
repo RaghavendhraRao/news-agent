@@ -120,8 +120,8 @@ def slug_title(url: str) -> str:
 def real_title(url: str) -> str:
     """Fetch the page's <title>. Falls back to the slug on any failure."""
     try:
-        r = requests.get(url, headers={"User-Agent": UA}, timeout=12,
-                         allow_redirects=True)
+        r = requests.get(url, headers={"User-Agent": UA}, timeout=8,
+                         allow_redirects=True, stream=False)
         m = re.search(r"<title[^>]*>(.*?)</title>", r.text[:200000],
                       re.S | re.I)
         if m:
@@ -239,3 +239,43 @@ def collect_by_title(categories: dict, locality: dict,
         out[name] = hits[:max_per_cat]
         log.info("%-16s -> %d title matches", name, len(out[name]))
     return out
+
+
+# ---------------------------------------------------------------- article text
+
+_STRIP = re.compile(
+    r"<(script|style|nav|header|footer|aside|form|figure)[^>]*>.*?</\1>",
+    re.S | re.I)
+_PARA = re.compile(r"<p[^>]*>(.*?)</p>", re.S | re.I)
+_TAG = re.compile(r"<[^>]+>")
+
+
+def article_text(url: str, max_chars: int = 2500) -> str:
+    """
+    Pull the body paragraphs of a news page.
+
+    A 150-word summary written from a headline alone is invention, not
+    summary -- the model has nothing to compress. This is what makes long
+    summaries honest. Extraction is deliberately crude (paragraph tags, no
+    readability heuristics): it fails to blank rather than to garbage, and
+    the caller skips anything too short.
+    """
+    try:
+        r = requests.get(url, headers={"User-Agent": UA}, timeout=14,
+                         allow_redirects=True)
+        html_src = r.text[:400000]
+    except Exception:
+        return ""
+
+    html_src = _STRIP.sub(" ", html_src)
+    paras = []
+    for raw in _PARA.findall(html_src):
+        txt = _html.unescape(_TAG.sub(" ", raw))
+        txt = re.sub(r"\s+", " ", txt).strip()
+        # skip nav crumbs, bylines, cookie notices
+        if len(txt) < 60 or txt.count(" ") < 8:
+            continue
+        paras.append(txt)
+        if sum(len(p) for p in paras) > max_chars:
+            break
+    return " ".join(paras)[:max_chars]

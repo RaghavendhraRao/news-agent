@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Wire — world news, machine-triaged</title>
+<meta name="description" content="Global news by topic and place, summarised, with unusual-coverage detection.">
+<meta name="theme-color" content="#14181C">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#FBFBF8; --surface:#FFFFFF; --ink:#14181C; --body-ink:#3B434C;
+  --muted:#767F8A; --rule:#E7E8E1; --rule-soft:#F1F2EC;
+  --high:#A4161A; --med:#B07D00; --low:#2D6A4F;
+  --display:'Archivo',system-ui,sans-serif;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --r:4px; --gut:20px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+  font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+body.locked{overflow:hidden}
+.wrap{max-width:1180px;margin:0 auto;padding:0 var(--gut) 80px}
+a{color:inherit} button,select,input{font:inherit}
+:is(select,input,button):focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+/* ---------- loading curtain ---------- */
+#boot{position:fixed;inset:0;z-index:90;background:var(--paper);
+  display:grid;place-content:center;justify-items:center;gap:16px;text-align:center;padding:24px}
+#boot .globe{font-size:44px;animation:spin 1.6s ease-in-out infinite}
+@keyframes spin{0%,100%{transform:rotate(-8deg)}50%{transform:rotate(8deg)}}
+#bootMsg{font-family:var(--mono);font-size:12.5px;letter-spacing:.04em;color:var(--muted);
+  max-width:30ch;min-height:2.6em}
+
+/* ---------- onboarding ---------- */
+#prefs{position:fixed;inset:0;z-index:80;background:rgba(20,24,28,.55);
+  display:grid;place-items:center;padding:16px;overflow-y:auto}
+.sheet{background:var(--surface);border-radius:8px;max-width:520px;width:100%;
+  padding:26px 24px;box-shadow:0 20px 50px rgba(0,0,0,.2)}
+.sheet h2{font-family:var(--display);font-size:24px;margin:0 0 4px;letter-spacing:-.02em}
+.sheet .lede{color:var(--muted);font-size:14px;margin:0 0 20px}
+.sheet label{display:block;font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:16px 0 7px}
+.sheet select{width:100%;padding:10px 12px;border:1px solid var(--rule);
+  border-radius:var(--r);background:var(--surface);font-size:15px;appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23767F8A'/></svg>");
+  background-repeat:no-repeat;background-position:right 12px center}
+.pickgrid{display:flex;flex-wrap:wrap;gap:6px;max-height:190px;overflow-y:auto;
+  padding:2px;border:1px solid var(--rule-soft);border-radius:var(--r)}
+.pick{padding:6px 11px;border:1px solid var(--rule);background:var(--surface);
+  border-radius:20px;font-size:12.5px;cursor:pointer;color:var(--muted)}
+.pick[aria-pressed=true]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.sheetActions{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}
+.btn{padding:11px 18px;border-radius:var(--r);border:1px solid var(--ink);
+  background:var(--ink);color:#fff;cursor:pointer;font-size:14.5px;font-weight:500;flex:1}
+.btn.ghost{background:transparent;color:var(--ink)}
+
+/* ---------- status ---------- */
+.status{position:sticky;top:0;z-index:40;background:var(--ink);color:#E9EAE4;
+  padding:9px var(--gut);font-family:var(--mono);font-size:11px;letter-spacing:.05em;
+  display:flex;align-items:center;gap:10px}
+.status .dot{width:6px;height:6px;border-radius:50%;background:#5BD1A0;flex:none}
+.status .right{margin-left:auto;opacity:.6}
+.status button{background:none;border:none;color:inherit;font-family:var(--mono);
+  font-size:11px;text-decoration:underline;cursor:pointer;opacity:.75;padding:0}
+
+/* ---------- masthead ---------- */
+header{padding:26px 0 16px}
+.brandline{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+h1{font-family:var(--display);font-weight:700;font-size:clamp(30px,7vw,42px);
+  letter-spacing:-.025em;margin:0;line-height:.95}
+.tagline{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--muted)}
+
+/* ---------- lift meter ---------- */
+.panel{background:var(--surface);border:1px solid var(--rule);border-radius:var(--r);
+  padding:15px 16px;margin-top:14px}
+.panel h2{font-family:var(--mono);font-size:10.5px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--muted);margin:0 0 10px;font-weight:500}
+.meter{display:grid;gap:9px}
+.mrow{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:baseline}
+.mrow .name{font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow .mult{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--high)}
+.mbar{grid-column:1/-1;height:3px;background:var(--rule-soft);position:relative;
+  overflow:hidden;border-radius:2px;margin-top:-3px}
+.mbar i{position:absolute;inset:0 auto 0 0;background:var(--high);width:0;
+  animation:grow .6s cubic-bezier(.2,.8,.3,1) forwards}
+@keyframes grow{to{width:var(--w)}}
+
+/* ---------- filters ---------- */
+.filters{position:sticky;top:33px;z-index:30;background:var(--paper);
+  padding:14px 0 10px;margin-top:18px;border-bottom:1px solid var(--rule)}
+.frow{display:flex;gap:8px;flex-wrap:wrap}
+.field{flex:1 1 160px;min-width:0}
+select.f,input[type=search]{width:100%;padding:9px 11px;border:1px solid var(--rule);
+  background:var(--surface);color:var(--ink);border-radius:var(--r);font-size:14px;appearance:none}
+select.f{padding-right:26px;cursor:pointer;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23767F8A'/></svg>");
+  background-repeat:no-repeat;background-position:right 10px center}
+select.f:disabled{opacity:.4;cursor:not-allowed}
+input[type=search]{margin-bottom:8px}
+.chips{display:flex;gap:6px;overflow-x:auto;margin-top:9px;padding-bottom:3px;
+  scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;padding:6px 12px;border:1px solid var(--rule);background:var(--surface);
+  font-family:var(--mono);font-size:11px;cursor:pointer;color:var(--muted);
+  border-radius:20px;white-space:nowrap}
+.chip[aria-pressed=true]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.chip.hot[aria-pressed=false]{color:var(--high);border-color:#EBD3D3}
+
+/* ---------- feed ---------- */
+.feedhead{display:flex;align-items:baseline;gap:10px;margin:20px 0 4px;flex-wrap:wrap}
+.feedhead h2{font-family:var(--display);font-size:19px;margin:0;letter-spacing:-.01em}
+.feedhead .count{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.grid{display:grid;gap:18px;grid-template-columns:1fr}
+@media(min-width:680px){.grid{grid-template-columns:repeat(2,1fr);gap:22px}}
+@media(min-width:1000px){.grid{grid-template-columns:repeat(3,1fr)}}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:var(--r);
+  overflow:hidden;display:flex;flex-direction:column}
+.thumb{aspect-ratio:16/9;background:var(--rule-soft);overflow:hidden;flex:none}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.cbody{padding:13px 14px 15px;display:flex;flex-direction:column;gap:7px;flex:1}
+.badges{display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+  font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--muted)}
+.badges .imp{width:7px;height:7px;border-radius:50%;background:var(--low);flex:none}
+.badges .imp.high{background:var(--high)}.badges .imp.medium{background:var(--med)}
+.badges .hot{color:var(--high)}
+.card h3{margin:0;font-size:16px;line-height:1.32;font-weight:600;letter-spacing:-.005em}
+.card h3 a{text-decoration:none}
+.card h3 a:hover{text-decoration:underline;text-underline-offset:2px}
+.card p{margin:0;font-size:14px;color:var(--body-ink);line-height:1.5}
+.card .foot{margin-top:auto;padding-top:8px;font-family:var(--mono);font-size:10px;
+  color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}
+.readmore{font-family:var(--sans);font-size:13px;font-weight:500;text-decoration:none;
+  border-bottom:1px solid var(--rule);padding-bottom:1px;align-self:flex-start}
+.empty{font-size:14px;color:var(--muted);padding:26px 0;line-height:1.6;grid-column:1/-1}
+footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--rule);
+  font-size:12px;color:var(--muted);line-height:1.65}
+@media (prefers-reduced-motion:reduce){.mbar i,#boot .globe{animation:none;width:var(--w)}}
+</style>
+</head>
+<body class="locked">
+
+<div id="boot">
+  <div class="globe" id="bootGlobe">🌍</div>
+  <div id="bootMsg">Waking up the news robots…</div>
+</div>
+
+<div id="prefs" hidden>
+  <div class="sheet">
+    <h2>Set up your feed</h2>
+    <p class="lede">Pick what you want to see. You can change all of this later.</p>
+
+    <label for="pCountry">Country</label>
+    <select id="pCountry"></select>
+
+    <label for="pLang">Language</label>
+    <select id="pLang"></select>
+
+    <label>Categories</label>
+    <div class="pickgrid" id="pCats"></div>
+
+    <div class="sheetActions">
+      <button class="btn ghost" id="pAll">Show me everything</button>
+      <button class="btn" id="pGo">Start reading</button>
+    </div>
+  </div>
+</div>
+
+<div class="status">
+  <span class="dot" aria-hidden="true"></span><span id="stStamp">…</span>
+  <span class="right"><select id="langQuick" aria-label="Language"
+    style="background:transparent;border:1px solid rgba(255,255,255,.25);color:inherit;
+    font-family:var(--mono);font-size:11px;border-radius:3px;padding:1px 4px;margin-right:8px"></select>
+    <button id="editPrefs">preferences</button></span>
+</div>
+
+<div class="wrap">
+  <header>
+    <div class="brandline"><h1>Wire</h1><span class="tagline">world desk</span></div>
+  </header>
+
+  <section class="panel">
+    <h2>Unusual coverage — places in the news far more than normal</h2>
+    <div class="meter" id="spikes"></div>
+  </section>
+
+  <div class="filters">
+    <input type="search" id="q" placeholder="Search headlines, places, sources, keywords" aria-label="Search">
+    <div class="frow">
+      <div class="field"><select class="f" id="country" aria-label="Country"></select></div>
+      <div class="field"><select class="f" id="state" aria-label="State or region" disabled></select></div>
+      <div class="field"><select class="f" id="place" aria-label="City or district" disabled></select></div>
+    </div>
+    <div class="chips" id="chips" role="group" aria-label="Categories"></div>
+  </div>
+
+  <section>
+    <div class="feedhead"><h2 id="feedTitle">Latest</h2><span class="count" id="feedCount"></span></div>
+    <div class="grid" id="list"></div>
+  </section>
+
+  <footer>
+    Headlines, images and links belong to their publishers. Summaries are
+    generated automatically and may be wrong or incomplete — open the source
+    before relying on anything.<br>
+    Built on GDELT · headlines refresh every 15 minutes.
+  </footer>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const LS = 'wire.prefs.v1';
+const state = {cat:'Top stories', q:'', country:'', st:'', place:'', cats:null, lang:'en'};
+let FEED = null;
+
+// Translations are per-article and may lag behind the feed, so every read
+// falls back to English rather than showing a blank card.
+const tx = (i, field) => (i.t && i.t[state.lang] && i.t[state.lang][field]) || null;
+const T = (i, field) => tx(i, field) || i[field] || '';
+const esc = s => String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ago = iso => { const m=Math.floor((Date.now()-new Date(iso))/60000);
+  if(m<1)return'now'; if(m<60)return m+'m'; const h=Math.floor(m/60);
+  return h<24?h+'h':Math.floor(h/24)+'d'; };
+
+/* ---- boot messages: the feed takes a second, so say something ---- */
+const BOOTS = [
+  ['🌍','Waking up the news robots…'],
+  ['📡','Listening to 100,000 newsrooms…'],
+  ['🗞️','Arguing with a headline…'],
+  ['🌏','Spinning the globe for good luck…'],
+  ['🔍','Ignoring three horoscopes…'],
+  ['📰','Politely asking the internet what happened…'],
+];
+let bi = 0;
+const bootTimer = setInterval(() => {
+  bi = (bi + 1) % BOOTS.length;
+  $('#bootGlobe').textContent = BOOTS[bi][0];
+  $('#bootMsg').textContent = BOOTS[bi][1];
+}, 1100);
+
+function savePrefs(){
+  try{ localStorage.setItem(LS, JSON.stringify(
+    {country:state.country, cats:state.cats, lang:state.lang})); }catch(e){}
+}
+function loadPrefs(){
+  try{ return JSON.parse(localStorage.getItem(LS) || 'null'); }catch(e){ return null; }
+}
+
+/* ---- onboarding ---- */
+function openPrefs(){
+  const geo = FEED.geo || {};
+  $('#pCountry').innerHTML = '<option value="">Everywhere</option>' +
+    Object.entries(geo).map(([k,v]) => `<option value="${esc(k)}"${k===state.country?' selected':''}>${esc(k)} (${v.n})</option>`).join('');
+  const names = FEED.language_names || {en:'English'};
+  $('#pLang').innerHTML = (FEED.languages||['en'])
+    .map(l => `<option value="${esc(l)}"${l===state.lang?' selected':''}>${esc(names[l]||l)}</option>`).join('');
+  const chosen = state.cats;
+  $('#pCats').innerHTML = (FEED.categories||[]).map(c =>
+    `<button class="pick" aria-pressed="${!chosen || chosen.includes(c)}" data-c="${esc(c)}">${esc(c)}</button>`).join('');
+  $('#pCats').querySelectorAll('.pick').forEach(b => b.onclick = () =>
+    b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') !== 'true'));
+  $('#prefs').hidden = false; document.body.classList.add('locked');
+}
+function closePrefs(all){
+  state.country = $('#pCountry').value;
+  state.lang = $('#pLang').value;
+  state.st = ''; state.place = '';
+  const picked = [...$('#pCats').querySelectorAll('.pick[aria-pressed=true]')].map(b=>b.dataset.c);
+  state.cats = (all || !picked.length || picked.length === (FEED.categories||[]).length) ? null : picked;
+  state.cat = 'Top stories';
+  savePrefs(); $('#prefs').hidden = true; document.body.classList.remove('locked');
+  buildGeo(); buildChips(); render();
+}
+$('#pGo').onclick  = () => closePrefs(false);
+$('#pAll').onclick = () => { $('#pCats').querySelectorAll('.pick').forEach(b=>b.setAttribute('aria-pressed','true')); closePrefs(true); };
+$('#editPrefs').onclick = openPrefs;
+
+/* ---- filters ---- */
+function opts(sel, list, ph, val){
+  sel.innerHTML = `<option value="">${ph}</option>` + list.map(([k,n]) =>
+    `<option value="${esc(k)}"${k===val?' selected':''}>${esc(k)}${n?` (${n})`:''}</option>`).join('');
+}
+function buildGeo(){
+  const geo = FEED.geo || {};
+  opts($('#country'), Object.entries(geo).map(([k,v])=>[k,v.n]), 'All countries', state.country);
+  const sSel = state.country ? (geo[state.country]?.states || {}) : {};
+  const hasS = Object.keys(sSel).length > 0;
+  $('#state').disabled = !hasS;
+  opts($('#state'), Object.entries(sSel).map(([k,v])=>[k,v.n]), hasS?'All states':'No regions', state.st);
+  const pSel = (state.st && sSel[state.st]) ? (sSel[state.st].places || {}) : {};
+  const hasP = Object.keys(pSel).length > 0;
+  $('#place').disabled = !hasP;
+  opts($('#place'), Object.entries(pSel), hasP?'All places':'No places', state.place);
+}
+function visibleCats(){
+  const all = FEED.categories || [];
+  return state.cats ? all.filter(c => state.cats.includes(c)) : all;
+}
+function buildChips(){
+  const list = ['Top stories', '#Trending', ...visibleCats().filter(c=>c!=='Top stories')];
+  $('#chips').innerHTML = list.map(c =>
+    `<button class="chip${c==='#Trending'?' hot':''}" aria-pressed="${c===state.cat}" data-c="${esc(c)}">${esc(c)}</button>`).join('');
+  $('#chips').querySelectorAll('.chip').forEach(b => b.onclick = () => {
+    state.cat = b.dataset.c; buildChips(); render(); });
+}
+function renderSpikes(){
+  const s = (FEED.spikes||[]).slice(0,6);
+  if(!s.length){ $('#spikes').innerHTML =
+    '<p class="empty" style="padding:0">Nothing unusual right now — detection calibrates over about a day of history.</p>'; return; }
+  const max = Math.max(...s.map(x=>x.lift));
+  $('#spikes').innerHTML = s.map(x=>`<div class="mrow">
+    <span class="name">${esc(x.place)}</span><span class="mult">${x.lift}×</span>
+    <div class="mbar"><i style="--w:${Math.round(x.lift/max*100)}%"></i></div></div>`).join('');
+}
+
+function render(){
+  const q = state.q.toLowerCase();
+  const allowed = state.cats;
+  const items = (FEED.items||[]).filter(i => {
+    const g = i.geo || {};
+    if(state.cat === '#Trending'){ if(!i.trending) return false; }
+    else if(state.cat !== 'Top stories' && i.category !== state.cat) return false;
+    if(state.cat === 'Top stories' && allowed && !allowed.includes(i.category)) return false;
+    if(state.country && g.country !== state.country) return false;
+    if(state.st && g.state !== state.st) return false;
+    if(state.place && g.place !== state.place) return false;
+    if(q && !((i.title||'')+' '+(tx(i,'title')||'')+' '+(i.summary||'')+' '+(i.lead||'')+' '+(tx(i,'lead')||'')+' '+(i.place||'')+' '+(i.source||'')+' '+(i.category||'')).toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const where = state.place || state.st || state.country;
+  $('#feedTitle').textContent = state.cat + (where ? ` · ${where}` : '');
+  $('#feedCount').textContent = items.length + ' stories';
+
+  if(!items.length){
+    $('#list').innerHTML = `<p class="empty">Nothing here yet. ${
+      state.cat==='#Trending' ? 'Trending needs about a day of history before it fills in.'
+      : where ? 'This place may have no coverage in the last 48 hours — try a wider area.'
+      : 'Try another category or a broader search.'}</p>`;
+    return;
+  }
+  $('#list').innerHTML = items.map(i => `
+    <article class="card">
+      ${i.image ? `<div class="thumb"><img src="${esc(i.image)}" alt="" loading="lazy"
+         referrerpolicy="no-referrer" onerror="this.closest('.thumb').remove()"></div>` : ''}
+      <div class="cbody">
+        <div class="badges">
+          <span class="imp ${esc(i.impact)}"></span><span>${esc(i.category)}</span>
+          ${i.trending ? '<span class="hot">#trending</span>' : ''}
+        </div>
+        <h3><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">${esc(T(i,'title'))}</a></h3>
+        <p>${esc(T(i,'lead') || i.summary || '')}</p>
+        <a class="readmore" href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">Read full story →</a>
+        <div class="foot"><span>${esc(i.source)}</span>${i.place?`<span>${esc(i.place)}</span>`:''}<span>${ago(i.ts)}</span></div>
+      </div>
+    </article>`).join('');
+}
+
+$('#q').oninput = e => { state.q = e.target.value; render(); };
+$('#country').onchange = e => { state.country=e.target.value; state.st=''; state.place=''; savePrefs(); buildGeo(); render(); };
+$('#state').onchange   = e => { state.st=e.target.value; state.place=''; buildGeo(); render(); };
+$('#place').onchange   = e => { state.place=e.target.value; render(); };
+
+fetch('feed.json?t=' + Date.now())
+  .then(r => r.ok ? r.json() : Promise.reject(r.status))
+  .then(d => {
+    FEED = d;
+    clearInterval(bootTimer); $('#boot').remove();
+    $('#stStamp').textContent = 'updated ' + ago(d.generated) + ' ago · ' + d.counts.items + ' stories';
+    const names = d.language_names || {en:'English'};
+    $('#langQuick').innerHTML = (d.languages||['en'])
+      .map(l => `<option value="${esc(l)}">${esc(names[l]||l)}</option>`).join('');
+    $('#langQuick').onchange = e => { state.lang = e.target.value; savePrefs(); render(); };
+    renderSpikes();
+    const saved = loadPrefs();
+    if(saved){
+      state.country = saved.country || ''; state.cats = saved.cats || null;
+      state.lang = saved.lang || 'en';
+      $('#langQuick').value = state.lang;
+      document.body.classList.remove('locked');
+      buildGeo(); buildChips(); render();
+    } else { buildGeo(); buildChips(); render(); openPrefs(); }
+  })
+  .catch(err => {
+    clearInterval(bootTimer);
+    $('#bootGlobe').textContent = '📵';
+    $('#bootMsg').textContent = 'Could not load the feed. It rebuilds every 15 minutes — try again shortly.';
+    console.error(err);
+  });
+</script>
+</body>
+</html>
