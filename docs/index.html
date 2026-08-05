@@ -41,9 +41,19 @@ a{color:inherit} button,select,input{font:inherit}
 /* ---------- onboarding ---------- */
 #prefs{position:fixed;inset:0;z-index:80;background:rgba(20,24,28,.55);
   display:grid;place-items:center;padding:16px;overflow-y:auto}
+/* An author display rule overrides the UA stylesheet's [hidden]{display:none},
+   so the attribute alone does nothing here. This is what kept the sheet on
+   screen no matter which button was pressed. */
+#prefs[hidden],#langField[hidden]{display:none}
 .sheet{background:var(--surface);border-radius:8px;max-width:520px;width:100%;
   padding:26px 24px;box-shadow:0 20px 50px rgba(0,0,0,.2)}
-.sheet h2{font-family:var(--display);font-size:24px;margin:0 0 4px;letter-spacing:-.02em}
+.sheet{position:relative}
+.sheetClose{position:absolute;top:12px;right:12px;width:34px;height:34px;
+  border:none;background:transparent;color:var(--muted);font-size:22px;
+  line-height:1;cursor:pointer;border-radius:50%}
+.sheetClose:hover{background:var(--rule-soft);color:var(--ink)}
+.sheet h2{font-family:var(--display);font-size:24px;margin:0 0 4px;
+  letter-spacing:-.02em;padding-right:36px}
 .sheet .lede{color:var(--muted);font-size:14px;margin:0 0 20px}
 .sheet label{display:block;font-family:var(--mono);font-size:10.5px;
   letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:16px 0 7px}
@@ -154,6 +164,7 @@ footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--rule);
 
 <div id="prefs" hidden>
   <div class="sheet">
+    <button class="sheetClose" id="pClose" aria-label="Close">&times;</button>
     <h2>Set up your feed</h2>
     <p class="lede">Pick what you want to see. You can change all of this later.</p>
 
@@ -275,9 +286,16 @@ function closePrefs(all){
   const picked = [...$('#pCats').querySelectorAll('.pick[aria-pressed=true]')].map(b=>b.dataset.c);
   state.cats = (all || !picked.length || picked.length === (FEED.categories||[]).length) ? null : picked;
   state.cat = 'Top stories';
-  savePrefs(); $('#prefs').hidden = true; document.body.classList.remove('locked');
+  savePrefs();
+  $('#prefs').hidden = true;
+  document.body.classList.remove('locked');
   buildGeo(); buildChips(); render();
 }
+$('#pClose').onclick = () => closePrefs(false);
+$('#prefs').onclick = e => { if (e.target === $('#prefs')) closePrefs(false); };
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !$('#prefs').hidden) closePrefs(false);
+});
 $('#pGo').onclick  = () => closePrefs(false);
 $('#pAll').onclick = () => { $('#pCats').querySelectorAll('.pick').forEach(b=>b.setAttribute('aria-pressed','true')); closePrefs(true); };
 $('#editPrefs').onclick = openPrefs;
